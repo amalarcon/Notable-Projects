@@ -1,0 +1,284 @@
+# -*- coding: utf-8 -*-
+"""@author: Aaron Alarcon, The Universty of Texas at El Paso
+@version: 1.0
+@since: April 1, 2020
+Written using Spyder 4.0.1 on Anaconda Navigator 1.9.7
+
+Function: Generate Dialog response pairs along with lexical features based on 
+transcripts from two speakers having a conversation
+
+    
+Input 1: A directory full of switchboard transcript files
+downloaded from https://www.isip.piconepress.com/projects/switchboard/
+
+
+Outputs: 
+Found in the folder lexical features:
+    For each utterance for every speaker:
+        The timestamp their utterance starts at
+        The timestamp their utterance ends at
+        The lexical features of their utterance
+Found in the folder Conversations:
+    For each matching utterance:
+        A character denoting which speaker is talking
+        a start and end time for the speaker that's talking
+        a start and end time for the other speaker's response
+        the lexical features of the speaker initiating the dialog pair
+"""
+import numpy as np
+import os
+
+
+#makes a dictionary of Glove encodings for every word that Glove has
+def MakeGloveDict():
+    gloveDict = {}
+    gloveFile = open("glove.6B.50d.txt", "r", encoding = "utf-8")
+    for line in gloveFile:
+        line = line.strip()
+        lineArr = line.split(" ")
+        gloveDict[lineArr[0]] = np.asarray(lineArr[1:]).astype(float)
+    return gloveDict
+
+#makes a tracklist based on the files present in our conversations
+def GenerateTracklist():
+    pathFormat = "Conversations/0{:02d}{:02d}.txt"
+    tracks = open("ConvoTracks.tl", "w")
+    tracks.write("C:/Users/Aaron/Downloads/midlevel-master/midlevel-master/flowtest/au/\n#\n")
+    trackline = "l sw0{:02d}{:02d}.au\n"
+    for directory_num in range(directory_range[0],directory_range[1]):
+        for file_num in range(file_range[0], file_range[1]):
+            try:
+                file = open(pathFormat.format(directory_num, file_num))
+                tracks.write(trackline.format(directory_num, file_num))
+                file.close()
+            except FileNotFoundError:
+                continue
+    tracks.close()
+
+#Creates a comma separated string from the contents of our array
+def ArrToStr(Arr):
+    fullString = ""
+    strForm = "{:f}, "
+    endForm = "{:f}"
+    for i in Arr[:-1]:
+        fullString += strForm.format(i)
+    fullString += endForm.format(Arr[-1])
+    return fullString
+
+#Deduces if the alternateArr is a response to the currentArr
+def GetValidity(currentArr, alternateArr):
+    
+    #takeover means that the response should take over as the current utterance
+    validResponse = 0
+    takeOver = 1
+    #if the response is too short or it ends before the current utterance,
+    #it cannot take over as the new current utterance 
+    if(alternateArr[1] - alternateArr[0] < 2 or alternateArr[1] < currentArr[1]):
+        takeOver = 0
+        
+    #if the response falls in a certain range, it is valid
+    if(alternateArr[0] > currentArr[0] and alternateArr[0] - currentArr[1] <= 2):
+        validResponse = 1
+    return takeOver, validResponse
+
+#sees which utterance is first to determine the current speaker
+def DetermineFirst(aArr, bArr):
+    if aArr[0] < bArr[0]:
+        return "A"
+    else:
+        return "B"
+    
+def GenerateResponses():
+    #creation of result file
+    operatorForm = "LexicalFeatures/0{:02d}{:02d}{:s}.txt"
+    resultForm = "Conversations/0{:02d}{:02d}.txt"
+    resultLine = "{:s}, {:f}, {:f}, {:f}, {:f}, {:s}\n"
+    
+    for directory_num in range(directory_range[0],directory_range[1]):
+        if directory_num == 35:
+            print("Halfway There")
+        for file_num in range(file_range[0], file_range[1]):
+            try:
+                #open all the necessary files
+                aSide = open(operatorForm.format(directory_num, file_num, "A"), "r")
+                bSide = open(operatorForm.format(directory_num, file_num, "B"), "r")
+                result = open(resultForm.format(directory_num, file_num), "w")
+                result.write("CurrentSpeaker, CStart, CEnd, RStart, REnd, LexFeat\n")
+                
+                #store the data from the file in an array and keep a count for 
+                #which index we are on
+                aUtterances = aSide.read().split('\n')
+                bUtterances = bSide.read().split('\n')
+                aCount = 0
+                bCount = 0
+                
+                
+                #determine which utterance starts sooner
+                firstA = np.asarray(aUtterances[0].split(",")).astype(float)
+                firstB = np.asarray(bUtterances[0].split(",")).astype(float)          
+                currentSpeaker = DetermineFirst(firstA, firstB)
+                redoCurrent = 0
+    
+                    
+                #while we have more utterances
+                while(aCount < len(aUtterances)-1 and bCount < len(bUtterances)-1):
+                    
+                    #Set up arrays for the current and alternate utterances
+                    if currentSpeaker == "A":
+                        currentArr = np.asarray(aUtterances[aCount].split(",")).astype(float)
+                        alternateArr = np.asarray(bUtterances[bCount].split(",")).astype(float) 
+                        #if we need to update the current speaker, we check it with this
+                        if redoCurrent:
+                            currentSpeaker = DetermineFirst(currentArr, alternateArr)
+                            redoCurrent = 0
+                            continue
+                    else:
+                        #set up arrays for current and alternate utterances
+                        currentArr = np.asarray(bUtterances[bCount].split(",")).astype(float)
+                        alternateArr = np.asarray(aUtterances[aCount].split(",")).astype(float)
+                        #if we need to update the current speaker, update it with this
+                        if redoCurrent:
+                            currentSpeaker = DetermineFirst(alternateArr, currentArr)
+                            redoCurrent = 0
+                            continue
+                        
+                    #Get Validity from function 
+                    takeOver, valid = GetValidity(currentArr, alternateArr)
+                    
+                    #We have a valid response
+                    if valid:
+                        result.write(resultLine.format(currentSpeaker, currentArr[0], currentArr[1], alternateArr[0], alternateArr[1], ArrToStr(currentArr[2:])))
+                        #If the reponse is able to take over as the current utterance
+                        if takeOver:
+                            if currentSpeaker == "A":
+                                currentSpeaker = "B"
+                                aCount+=1
+                            else:
+                                currentSpeaker = "A"
+                                bCount+=1
+                        #If the response can't take over, iterate it
+                        else:
+                            if currentSpeaker == "A":
+                                bCount+=1
+                            else:
+                                aCount+=1
+                    #If we got an invalid reponse, iterate the current utterance
+                    #and redetermine the current speaker
+                    else:
+                        if currentSpeaker == "A":
+                            aCount+=1
+                        else:
+                            bCount+=1
+                        redoCurrent = 1
+            except FileNotFoundError:
+                continue
+            aSide.close()
+            bSide.close()
+            result.close()
+                
+                    
+    
+def ComputeLexicalFeatures():
+    #each path follows the convention
+    #(directory)/(directory)(file)/sw(directory)(directory)(file)(side)-ms98-a-trans.TEXT
+    pathFormat = directoryPointer + "{:02d}/{:02d}{:02d}/sw{:02d}{:02d}{:s}-ms98-a-trans.TEXT"
+    #creation of result file
+    resultForm = "LexicalFeatures/0{:02d}{:02d}{:s}.txt"
+    
+    #Format that we split by in the transcript to separate each utterance
+    splitter = "sw{:02d}{:02d}{:s}-ms98-a-"
+    
+    #keeps track of words that encodings do not exist for
+    wordErrors = "LexicalFeatures/BadWords.txt"
+    errors = open(wordErrors, "w")
+    
+    #we remove noise from the utterances so that the features are consistent
+    #some words are formatted such as try[ing], so we remove the brackets
+    #so that we can get valid encodings
+    removeChar = ["[noise]","[laughter-" "[", "]"]
+    
+    
+    #traverse through all the sides in the files in the directories
+    for directory_num in range(directory_range[0],directory_range[1]):
+        if directory_num == 35:
+            print("Halfway There")
+        for file_num in range(file_range[0], file_range[1]):
+            for side in sides:
+                pathString = pathFormat.format(directory_num,directory_num,
+                                               file_num,directory_num,
+                                               file_num,side);
+                try:
+                   #opening file 
+                   file = open(pathString, 'r')
+                   resultfile = open(resultForm.format(directory_num, file_num, side), "w")
+                   
+                   #split the file up by utterances
+                   fileString = file.read()
+                   splitStr = splitter.format(directory_num, file_num, side)
+                   UtteranceArr = fileString.split(splitStr)
+                   
+                   #traverse through every utterance
+                   for utterance in UtteranceArr[1:]:
+                       #skip silences
+                       if ("[silence]" in utterance):
+                           continue
+                       
+                       #remove the aforementioned charaters
+                       for badchar in removeChar:
+                           utterance = utterance.replace(badchar, "")
+                           
+                       #split the utterance by its data the format of the utterance is:
+                       #beginning_time    end_time   all_words
+                       line = utterance.split()
+                       
+                       words = line[3:]
+                       totalArray = np.zeros(50, float)
+                       for word in words:
+                           try:
+                               totalArray = np.add(totalArray, gloveDict[word], casting = "unsafe")
+                            
+                           #if there is no encoding for the word, it throws a key error
+                           #we just add the word to our errors and continue
+                           except KeyError:
+                               errors.write(word + " ")
+                               continue
+                               
+                       #checking to make sure that the features are not null
+                       if not np.any(totalArray):
+                           continue
+                       #Convert our lexical features to a string and write it to the file
+                       vecString = ArrToStr(totalArray)
+                       resultfile.write(line[1] + ", " + line[2] +", " + vecString + "\n")
+    
+                except FileNotFoundError:
+                    continue
+            
+                resultfile.close()
+    errors.close()
+
+#making folders to store output files
+if not os.path.exists('LexicalFeatures'):
+    os.makedirs('LexicalFeatures')
+if not os.path.exists('Conversations'):
+    os.makedirs('Conversations')
+    
+#set as pointer to the directory that holds all the transcript files
+directoryPointer = ""
+
+#Setting up path traversal variables
+directory_range = [20,50]
+file_range = [0,100]
+sides = ['A','B']
+
+print("making glove dictionary\n")
+gloveDict = MakeGloveDict()
+print("computing features")
+ComputeLexicalFeatures()
+print("pairing responses")
+GenerateResponses()
+
+print("generating tracklist")
+GenerateTracklist()
+            
+            
+                
